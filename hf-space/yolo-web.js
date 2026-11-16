@@ -1,12 +1,12 @@
 // Browser-side YOLOv8 inference with onnxruntime-web (WASM, runs on the visitor's CPU).
 // Same pipeline as the Python service: letterbox 640 -> forward -> decode -> class-aware NMS.
 // Supports the axis-aligned detect head (1, 4+nc, N) and the OBB head (1, 4+nc+1, N).
-export async function loadModel(url, names, { obb = false } = {}) {
+export async function loadModel(url, names, { obb = false, size = 640 } = {}) {
   const ort = window.ort;
   ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
   const t0 = performance.now();
   const session = await ort.InferenceSession.create(url, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
-  return { session, names, obb, size: 640, loadMs: performance.now() - t0 };
+  return { session, names, obb, size, loadMs: performance.now() - t0 };
 }
 
 function letterbox(src, w, h, size) {
