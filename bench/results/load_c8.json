@@ -1,0 +1,10 @@
+{
+  "concurrency": 8,
+  "duration_s": 20.1,
+  "requests_ok": 1807,
+  "errors": 0,
+  "rps": 90.1,
+  "p50_ms": 84.5,
+  "p95_ms": 127.6,
+  "p99_ms": 166.5
+}

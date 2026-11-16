@@ -1,0 +1,8 @@
+# Export + benchmarks (PyTorch vs ONNX). Install the CPU wheel of torch:
+#   pip install -r requirements-bench.txt --extra-index-url https://download.pytorch.org/whl/cpu
+-r requirements-dev.txt
+torch==2.5.1
+torchvision==0.20.1
+ultralytics==8.4.215
+onnx==1.23.2
+onnxslim==0.1.99
