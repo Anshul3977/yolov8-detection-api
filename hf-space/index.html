@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>YOLOv8 in your browser</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+<style>
+  :root { color-scheme: dark; --bg:#0b0d10; --line:#2a313b; --fg:#e8eaed; --muted:#9aa0a6; --accent:#4f9cf9; }
+  * { box-sizing:border-box; } body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:980px; margin:0 auto; padding:28px 18px 48px; } h1 { font-size:24px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 14px; } a { color:var(--accent); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:12px 0; }
+  .btn { background:#1a1f26; border:1px solid var(--line); color:var(--fg); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
+  .btn:hover { border-color:var(--accent); } .btn:disabled { opacity:.5; cursor:wait; } input[type=file] { display:none; }
+  .stage { background:#07090b; border:1px solid var(--line); border-radius:10px; min-height:240px; display:grid; place-items:center; overflow:hidden; }
+  .stage canvas { max-width:100%; display:block; } .empty { color:var(--muted); padding:30px; text-align:center; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; } .chip { border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:13px; color:var(--muted); } .chip b { color:var(--fg); }
+</style>
+</head>
+<body>
+<main>
+  <h1>YOLOv8 object detection, running in your browser</h1>
+  <p>YOLOv8n (COCO, 80 classes) as ONNX, executed by ONNX Runtime Web on your own CPU. Nothing is uploaded. The same model also runs as a <a href="https://yolov8-detection-api.vercel.app" target="_blank">FastAPI service</a> (<a href="https://github.com/Anshul3977/yolov8-detection-api" target="_blank">source</a>).</p>
+  <div class="row">
+    <label class="btn">Image or clip<input id="file" type="file" accept="image/*,video/*" /></label>
+    <button class="btn" id="sImg">Sample image</button>
+    <button class="btn" id="sVid">Sample clip + tracking</button>
+    <button class="btn" id="cam">Webcam</button>
+    <span id="status" style="color:var(--muted)">Loading model…</span>
+  </div>
+  <div class="stage" id="stage"><div class="empty">The 12 MB model downloads once, then everything runs locally.</div></div>
+  <div class="chips" id="chips"></div>
+</main>
+<script type="module">
+import { loadModel, detect, IoUTracker } from "./yolo-web.js";
+const $ = (id) => document.getElementById(id);
+const names = await (await fetch("names.json")).json();
+let model, camOn = false, stream;
+const btns = ["sImg", "sVid", "cam"].map($); btns.forEach((b) => b.disabled = true);
+try { model = await loadModel("yolov8n.onnx", names); $("status").textContent = `Model ready in ${(model.loadMs / 1000).toFixed(1)} s`; btns.forEach((b) => b.disabled = false); }
+catch (e) { $("status").textContent = "Could not load the model: " + e.message; }
+const col = (k) => `hsl(${(k * 47) % 360} 90% 58%)`;
+function chips(p) { $("chips").replaceChildren(...p.map(([k, v]) => Object.assign(document.createElement("span"), { className: "chip", innerHTML: `${k} <b>${v}</b>` }))); }
+function paint(src, w, h, dets, tracked) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"); g.drawImage(src, 0, 0, w, h);
+  const lw = Math.max(2, w / 380); g.lineWidth = lw; g.font = `600 ${Math.round(lw * 6.5)}px system-ui`;
+  for (const d of dets) { const { x1, y1, x2, y2 } = d.box; g.strokeStyle = g.fillStyle = col(tracked ? d.track_id : d.class_id); g.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    const t = (tracked ? `#${d.track_id} ` : "") + `${d.label} ${(d.confidence * 100) | 0}%`, tw = g.measureText(t).width + lw * 2, th = lw * 8.5, ty = Math.max(0, y1 - th);
+    g.fillRect(x1, ty, tw, th); g.fillStyle = "#000"; g.fillText(t, x1 + lw, ty + th - lw * 2); }
+  return c;
+}
+async function runImage(blob) {
+  const bmp = await createImageBitmap(blob); const r = await detect(model, bmp, bmp.width, bmp.height);
+  $("stage").replaceChildren(paint(bmp, bmp.width, bmp.height, r.detections));
+  chips([["objects", r.detections.length], ["inference (your CPU)", `${r.timings.inference_ms} ms`], ["pre + post", `${(r.timings.preprocess_ms + r.timings.postprocess_ms).toFixed(1)} ms`]]);
+}
+async function runVideo(blob) {
+  const v = document.createElement("video"); v.muted = true; v.src = URL.createObjectURL(blob); await new Promise((r) => v.onloadeddata = r);
+  const tr = new IoUTracker(), dur = v.duration, fps = 5, inf = []; let shown;
+  for (let t = 0; t < dur; t += 1 / fps) {
+    v.currentTime = t; await new Promise((r) => v.onseeked = r);
+    const r = await detect(model, v, v.videoWidth, v.videoHeight); inf.push(r.timings.inference_ms);
+    shown = paint(v, v.videoWidth, v.videoHeight, tr.update(r.detections), true); $("stage").replaceChildren(shown);
+    const u = Object.entries(tr.summary()).map(([k, n]) => [`unique ${k}`, n]);
+    chips([["t", `${t.toFixed(1)} / ${dur.toFixed(1)} s`], ["inference", `${(inf.reduce((a, b) => a + b) / inf.length).toFixed(0)} ms avg`], ...u]);
+  }
+}
+async function webcam() {
+  if (camOn) { camOn = false; stream.getTracks().forEach((t) => t.stop()); $("cam").textContent = "Webcam"; return; }
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640 } }); } catch { $("status").textContent = "Camera unavailable or permission denied."; return; }
+  camOn = true; $("cam").textContent = "Stop webcam";
+  const v = document.createElement("video"); v.srcObject = stream; v.muted = true; v.playsInline = true; await v.play();
+  const tr = new IoUTracker(); let n = 0; const t0 = performance.now();
+  while (camOn) {
+    const r = await detect(model, v, v.videoWidth, v.videoHeight); n++;
+    $("stage").replaceChildren(paint(v, v.videoWidth, v.videoHeight, tr.update(r.detections), true));
+    chips([["live", `${(n / ((performance.now() - t0) / 1000)).toFixed(1)} fps`], ["inference", `${r.timings.inference_ms} ms`], ["objects", r.detections.length]]);
+    await new Promise((r) => requestAnimationFrame(r));
+  }
+}
+$("file").onchange = (e) => { const f = e.target.files[0]; if (f) (f.type.startsWith("video/") ? runVideo : runImage)(f); };
+$("sImg").onclick = async () => runImage(await (await fetch("bus.jpg")).blob());
+$("sVid").onclick = async () => runVideo(await (await fetch("street.mp4")).blob());
+$("cam").onclick = webcam;
+</script>
+</body>
+</html>

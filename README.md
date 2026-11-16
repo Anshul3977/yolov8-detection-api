@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/Anshul3977/yolov8-detection-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Anshul3977/yolov8-detection-api/actions/workflows/ci.yml)
 
-**Live demo:** https://yolov8-detection-api.vercel.app (image, video + tracking, and webcam modes; [OpenAPI docs](https://yolov8-detection-api.vercel.app/docs))
+**Live demos**
+- API + UI on Vercel: https://yolov8-detection-api.vercel.app (image, video + tracking, and webcam modes; [OpenAPI docs](https://yolov8-detection-api.vercel.app/docs))
+- In-browser version on Hugging Face Spaces: https://huggingface.co/spaces/ANSHUL3977/yolov8-detection-demo. The same ONNX model runs client-side with ONNX Runtime Web (WASM), with a live webcam tracker and no server round trip.
 
 ![Video mode: cars tracked across frames with persistent IDs](docs/demo-video-tracking.png)
 
@@ -182,18 +184,17 @@ models/         yolov8n.onnx (exported with dynamic batch axis, opset 17)
 scripts/        export_onnx.py, deploy_hf_space.py
 bench/          latency.py, loadtest.py, results/*.json
 tests/          pytest suite + sample images
-deploy/         Hugging Face Space README (front matter)
+hf-space/       in-browser demo (ONNX Runtime Web) published to Hugging Face Spaces
 ```
 
 ## Deploy
 
 **Vercel** (current live demo): `index.py` at the repo root exposes the FastAPI app, so `vercel deploy --prod` is all it takes. `vercel.json` gives the function 2 GB of memory and bundles `models/`.
 
-**Hugging Face Spaces** (Docker): free CPU Docker Spaces now need an HF PRO plan.
+**Hugging Face Spaces** (static, free): `hf-space/` is a client-side build of the demo. `yolo-web.js` re-implements letterbox, decoding, class-aware NMS and the IoU tracker in JavaScript on top of ONNX Runtime Web. Free Docker/Gradio Spaces now need HF PRO, so the API itself lives on Vercel.
 
 ```bash
-pip install huggingface_hub
-HF_TOKEN=<write token> python scripts/deploy_hf_space.py --space <hf-user>/yolov8-detection-api
+HF_TOKEN=<write token> python scripts/deploy_hf_space.py --space <hf-user>/yolov8-detection-demo
 ```
 
 ## License

@@ -9,3 +9,4 @@ deploy
 *.pt
 .vercel
 docs
+hf-space
