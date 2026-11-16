@@ -31,6 +31,7 @@ jobs:
           for i in $(seq 1 30); do curl -sf localhost:7860/health && break; sleep 1; done
           curl -sf localhost:7860/health
           curl -sf -F "file=@tests/assets/bus.jpg" localhost:7860/detect | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['count'], 'objects'); assert any(d['label']=='bus' for d in r['detections'])"
+          curl -sf -F "file=@app/static/street.mp4" "localhost:7860/detect/video?sample_fps=2" | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['unique_objects']); assert r['unique_objects'].get('car', 0) >= 1"
           curl -sf localhost:7860/metrics | grep -q model_inference_duration_seconds
       - if: failure()
         run: docker logs api

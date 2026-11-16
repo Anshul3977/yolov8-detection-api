@@ -2,10 +2,14 @@
 
 [![CI](https://github.com/Anshul3977/yolov8-detection-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Anshul3977/yolov8-detection-api/actions/workflows/ci.yml)
 
+**Live demo:** https://yolov8-detection-api.vercel.app (image, video + tracking, and webcam modes; [OpenAPI docs](https://yolov8-detection-api.vercel.app/docs))
+
 A production-style object detection service. Pretrained **YOLOv8n** (COCO, 80 classes) is exported to **ONNX** and served with **ONNX Runtime** behind **FastAPI**. PyTorch is only used to export the model and to benchmark against, so the serving image doesn't carry it.
 
 - `POST /detect`: one image in, boxes, labels and confidences out
 - `POST /detect/batch`: up to 16 images in **one** forward pass (dynamic batch axis)
+- `POST /detect/video`: a short clip in, frames sampled at `sample_fps`, batched through the model, and linked into **tracks** so each object is counted once (`unique_objects`)
+- `WS /ws/detect`: streaming mode for webcams. Send JPEG frames, get detections with persistent track IDs back per frame (needs a long-lived server, so it runs in Docker but not on Vercel)
 - `GET /health`: model and runtime status
 - `GET /metrics`: Prometheus metrics (request rate, latency histograms, inference time, detections per class)
 - `GET /docs`: OpenAPI UI, and `GET /` is a small browser demo that draws the boxes
@@ -21,6 +25,8 @@ flowchart LR
     O --> N[Decode + class-aware NMS<br/>NumPy]
     N --> A
     A -->|JSON boxes + timings| C
+    N --> T[IoU tracker<br/>video and WebSocket only]
+    T --> A
     A -.-> M[(Prometheus /metrics)]
     subgraph Offline
       W[yolov8n.pt] -->|scripts/export_onnx.py| X[models/yolov8n.onnx]
@@ -68,6 +74,38 @@ pip install -r requirements-bench.txt --extra-index-url https://download.pytorch
 python bench/latency.py --threads 4 --iters 200
 uvicorn app.main:app --port 8000 &
 python bench/loadtest.py --url http://127.0.0.1:8000 --concurrency 8 --duration 20
+```
+
+### Hosted demo (Vercel serverless, CPU)
+
+Measured from a client in India against the production deployment, 50 sequential `POST /detect` calls with `bus.jpg` after 3 warm-up calls:
+
+| | p50 | p95 |
+|---|---|---|
+| Server-side model inference | 170.3 ms | 193.8 ms |
+| Full round trip (upload + network + JSON) | 1.54 s | 1.65 s |
+
+On the 8 s sample street clip (`/detect/video`, 40 frames sampled at 5 fps), the hosted function processed 4.96 frames/s and counted 10 unique cars and 3 trucks. Serverless CPUs are much slower than the 8 vCPU VM above, so this is the floor, not the ceiling.
+
+## Tracking
+
+`app/tracker.py` is a SORT-style tracker without the Kalman filter. Each new frame's detections are matched to live tracks of the same class, highest IoU first (threshold 0.3). Unmatched detections open new tracks, and tracks unseen for more than 5 frames are dropped. A track only counts toward `unique_objects` after 2 matches, which filters out one-frame flicker. It's deliberately simple. Fast motion at low `sample_fps` breaks IoU overlap, and a Kalman motion model or ByteTrack-style low-score matching would be the next step.
+
+```bash
+curl -F "file=@app/static/street.mp4" "localhost:8000/detect/video?sample_fps=5"
+# {"frames_analysed": 40, "unique_objects": {"car": 10, "truck": 3, ...},
+#  "frames": [{"frame": 0, "t": 0.0, "detections": [{"track_id": 1, "label": "car", ...}]}, ...]}
+```
+
+WebSocket (Python client):
+
+```python
+import asyncio, websockets
+async def main():
+    async with websockets.connect("ws://localhost:8000/ws/detect") as ws:
+        await ws.send(open("frame.jpg", "rb").read())
+        print(await ws.recv())  # {"frame": 0, "detections": [{"track_id": 1, ...}], "unique_objects": {...}}
+asyncio.run(main())
 ```
 
 ## Quick start
@@ -131,12 +169,13 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
-13 tests cover letterbox and NMS, real detections on sample images (a bus and 3+ people in `bus.jpg`), batch-vs-single consistency, threshold filtering, error codes, and the metrics output. GitHub Actions runs the tests, then builds the Docker image and smoke-tests `/health`, `/detect` and `/metrics` against the running container.
+21 tests cover letterbox and NMS, the tracker (ID persistence, class separation, track expiry), video upload with tracking on a generated clip, the WebSocket stream, real detections on sample images (a bus and 3+ people in `bus.jpg`), batch-vs-single consistency, threshold filtering, error codes, and the metrics output. GitHub Actions runs the tests, then builds the Docker image and smoke-tests `/health`, `/detect` and `/metrics` against the running container.
 
 ## Project layout
 
 ```
-app/            FastAPI app, ONNX detector, Prometheus metrics, demo page
+app/            FastAPI app, ONNX detector, IoU tracker, Prometheus metrics, demo page
+index.py        Vercel entrypoint
 models/         yolov8n.onnx (exported with dynamic batch axis, opset 17)
 scripts/        export_onnx.py, deploy_hf_space.py
 bench/          latency.py, loadtest.py, results/*.json
@@ -144,7 +183,11 @@ tests/          pytest suite + sample images
 deploy/         Hugging Face Space README (front matter)
 ```
 
-## Deploy to Hugging Face Spaces
+## Deploy
+
+**Vercel** (current live demo): `index.py` at the repo root exposes the FastAPI app, so `vercel deploy --prod` is all it takes. `vercel.json` gives the function 2 GB of memory and bundles `models/`.
+
+**Hugging Face Spaces** (Docker): free CPU Docker Spaces now need an HF PRO plan.
 
 ```bash
 pip install huggingface_hub
@@ -153,4 +196,4 @@ HF_TOKEN=<write token> python scripts/deploy_hf_space.py --space <hf-user>/yolov
 
 ## License
 
-YOLOv8 weights and the Ultralytics export tooling are AGPL-3.0, so this project is AGPL-3.0 too. The sample images in `tests/assets` come from the Ultralytics repository.
+YOLOv8 weights and the Ultralytics export tooling are AGPL-3.0, so this project is AGPL-3.0 too. The sample images in `tests/assets` come from the Ultralytics repository. The demo clip `app/static/street.mp4` is cut from "Queen Victoria Street (Fremantle Traffic Bridge) south" on Wikimedia Commons (CC0).
