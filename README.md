@@ -4,6 +4,8 @@
 
 **Live demo:** https://yolov8-detection-api.vercel.app (image, video + tracking, and webcam modes; [OpenAPI docs](https://yolov8-detection-api.vercel.app/docs))
 
+![Video mode: cars tracked across frames with persistent IDs](docs/demo-video-tracking.png)
+
 A production-style object detection service. Pretrained **YOLOv8n** (COCO, 80 classes) is exported to **ONNX** and served with **ONNX Runtime** behind **FastAPI**. PyTorch is only used to export the model and to benchmark against, so the serving image doesn't carry it.
 
 - `POST /detect`: one image in, boxes, labels and confidences out

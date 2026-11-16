@@ -8,3 +8,4 @@ deploy
 .github
 *.pt
 .vercel
+docs
