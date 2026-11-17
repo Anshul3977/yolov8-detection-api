@@ -415,14 +415,18 @@ class JobQueue:
     def _sweep(self) -> None:
         now = time.time()
         with self._lock:
-            expired = [
-                job
-                for job in self._jobs.values()
-                if job.finished_at and now - job.finished_at > settings.job_ttl_seconds
-            ]
-            for job in expired:
+            finished = [job for job in self._jobs.values() if job.finished_at]
+            expired = [job for job in finished if now - job.finished_at > settings.job_ttl_seconds]
+            survivors = [job for job in finished if job not in expired]
+            survivors.sort(key=lambda job: job.finished_at or 0)
+            overflow: list[Job] = []
+            if settings.max_retained_jobs <= 0:
+                overflow = survivors
+            elif len(survivors) > settings.max_retained_jobs:
+                overflow = survivors[: len(survivors) - settings.max_retained_jobs]
+            for job in expired + overflow:
                 shutil.rmtree(job.work_dir, ignore_errors=True)
-                del self._jobs[job.id]
+                self._jobs.pop(job.id, None)
 
 
 _queue: JobQueue | None = None

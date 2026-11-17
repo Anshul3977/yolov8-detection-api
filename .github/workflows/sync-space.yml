@@ -1,4 +1,7 @@
-name: Sync Hugging Face Space
+# Optional and inactive unless both HF_TOKEN and HF_SPACE are set.
+# Hugging Face Docker Spaces on free CPU returned 402 (PRO required), so
+# the live service is the Render Blueprint in render.yaml, not this workflow.
+name: Sync Hugging Face Space (optional)
 
 on:
   push:

@@ -1,4 +1,5 @@
-# Serving image: ONNX Runtime only (no PyTorch), ~ few hundred MB.
+# Serving image: ONNX Runtime only (no PyTorch).
+# Render sets PORT (often 10000). Local and compose default to 7860.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

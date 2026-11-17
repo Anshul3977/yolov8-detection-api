@@ -2,9 +2,11 @@
 
 [![CI](https://github.com/Anshul3977/yolov8-detection-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Anshul3977/yolov8-detection-api/actions/workflows/ci.yml)
 
-**Live demos**
-- API + UI on Vercel: https://yolov8-detection-api.vercel.app (image, video + tracking, and webcam modes; [OpenAPI docs](https://yolov8-detection-api.vercel.app/docs))
-- In-browser version on Hugging Face Spaces: https://huggingface.co/spaces/ANSHUL3977/yolov8-detection-demo. The same ONNX model runs client-side with ONNX Runtime Web (WASM), with a live webcam tracker and no server round trip.
+**Live demo:** https://yolov8-detection-api.onrender.com
+
+That URL is a Render free web service (Singapore, 512 MB). The free instance spins down after inactivity. The next visit is a cold start of about a minute while the container boots and the ONNX session loads.
+
+The same UI also runs on Vercel at https://yolov8-detection-api.vercel.app. An in-browser build (no server) is at https://huggingface.co/spaces/ANSHUL3977/yolov8-detection-demo.
 
 ![Video mode: cars tracked across frames with persistent IDs](docs/demo-video-tracking.png)
 
@@ -169,7 +171,7 @@ curl -F "files=@tests/assets/bus.jpg" -F "files=@tests/assets/zidane.jpg" localh
 docker compose up --build
 ```
 
-The image installs only `requirements.txt` (ONNX Runtime, no PyTorch) plus `ffmpeg` for annotated clips. It runs as uid 1000 and listens on `$PORT` (7860), so the same image is a Hugging Face Docker Space. `models/yolov8n.onnx` is the file produced by `scripts/export_onnx.py` from the official Ultralytics `yolov8n.pt` weights and copied into the image.
+The image installs only `requirements.txt` (ONNX Runtime, no PyTorch) plus `ffmpeg` for annotated clips. It listens on `0.0.0.0:$PORT` (`PORT` defaults to 7860; Render sets it). `models/yolov8n.onnx` is the file produced by `scripts/export_onnx.py` from the official Ultralytics `yolov8n.pt` weights and copied into the image.
 
 ## Configuration
 
@@ -183,8 +185,10 @@ The image installs only `requirements.txt` (ONNX Runtime, no PyTorch) plus `ffmp
 | `MAX_UPLOAD_MB` | `10` | Per-file upload limit (413 above it) |
 | `MAX_VIDEO_SECONDS` | `10` | Clip duration cap for `/jobs` |
 | `MAX_VIDEO_FRAMES` | `300` | Frame cap for `/jobs` |
-| `ORT_THREADS` | `0` (auto) | ONNX Runtime intra-op threads |
-| `PORT`, `WORKERS` | `7860`, `1` | Container only |
+| `ORT_THREADS` | `0` (auto) | ONNX Runtime intra-op threads. The Render Blueprint sets `1`. |
+| `MAX_QUEUED_JOBS` | `4` | Waiting clips. The Render Blueprint sets `1`. |
+| `MAX_RETAINED_JOBS` | `2` | Finished annotated MP4s kept on disk |
+| `PORT`, `WORKERS` | `7860`, `1` | Listen port and uvicorn workers. Render overrides `PORT`. |
 
 Errors: 415 for files that aren't images, 413 for files over the size limit or batches that are too large, 422 for bad query parameters.
 
@@ -211,46 +215,26 @@ hf-space/       in-browser demo (ONNX Runtime Web) published to Hugging Face Spa
 
 ## Deploy
 
-**Vercel** (current live demo): `index.py` at the repo root exposes the FastAPI app, so `vercel deploy --prod` is all it takes. `vercel.json` gives the function 2 GB of memory and bundles `models/`.
+**Render** (live target): [`render.yaml`](render.yaml) is a Blueprint for one free Docker web service in Singapore. Health check is `/health`, and `autoDeployTrigger: commit` deploys on every push to the linked branch. The service name is `yolov8-detection-api`, which is the placeholder https://yolov8-detection-api.onrender.com.
 
-**Hugging Face Spaces**
+1. In the Render Dashboard, New → Blueprint, and connect this GitHub repo.
+2. Apply the Blueprint. Render builds the Dockerfile and sets `ORT_THREADS=1`, `WORKERS=1`, `MAX_QUEUED_JOBS=1`, and `MAX_RETAINED_JOBS=2`.
+3. The free instance sleeps when idle. The first request after that takes about a minute.
 
-The in-browser demo is a static Space (`hf-space/`, ONNX Runtime Web). Publish it with:
+The free plan is 0.1 CPU and 512 MB RAM. A clip job on the bundled 8-second street sample (120 frames, 640×360), with the ONNX session in the same process, peaked at **254196 KiB RSS with 1 intra-op thread** and **254692 KiB RSS with 4 threads**. That is the process tree's `VmRSS`, and the higher of samples taken every 10 ms and every 50 ms. Both sit under 512 MB, so the 10-second and 300-frame caps stay. The Blueprint still pins one ORT thread: the free CPU is 0.1, and an automatic thread count can follow the host's CPU count rather than that quota.
 
-```bash
-HF_TOKEN=<write token> python scripts/deploy_hf_space.py --space <hf-user>/yolov8-detection-demo
-```
+Clip disk use stays bounded. The upload is deleted when the job finishes, the intermediate AVI is deleted after ffmpeg, at most `MAX_QUEUED_JOBS` uploads sit in the queue, and at most `MAX_RETAINED_JOBS` annotated MP4s are kept (then the TTL, default 30 minutes, deletes the rest).
 
-The API itself is also Docker-Space ready. Free CPU basic hardware sleeps after inactivity; the first request after sleep pays a cold start while the ONNX session loads. One-time setup:
+**Vercel** still serves the app from `index.py` (`vercel.json` gives the function 2 GB). Clip jobs need a long-lived process, so they belong on Render, not on a serverless invocation.
 
-1. Create a Space named `yolov8-detection-api`, SDK **Docker**, hardware **CPU basic**, public.
-2. Create a Hugging Face token that can write to that Space.
-3. In this GitHub repo, Settings → Secrets and variables → Actions:
-   - Secret `HF_TOKEN` = that token
-   - Variable `HF_SPACE` = `<huggingface-username>/yolov8-detection-api`
-4. Re-run **Sync Hugging Face Space**, or push to `main`. The workflow uploads the repo and prepends this header to the Space README only:
-
-```yaml
----
-title: YOLOv8 Detection API
-emoji: "🎯"
-colorFrom: blue
-colorTo: gray
-sdk: docker
-app_port: 7860
-pinned: false
-license: agpl-3.0
----
-```
-
-If `HF_TOKEN` or `HF_SPACE` is unset, the workflow exits successfully and does nothing. The ONNX file is about 13 MB, so the Hub stores it with Git LFS (the upload uses `huggingface_hub`, which does that). The first Space build takes a few minutes. The Space URL is `https://huggingface.co/spaces/<huggingface-username>/yolov8-detection-api`.
+**Hugging Face** is not the host for this API. Creating a Docker Space on free CPU returned 402 because that hardware now requires PRO. The in-browser static Space is separate and does not run this container. `.github/workflows/sync-space.yml` is optional and inactive: it does nothing unless the `HF_TOKEN` secret and `HF_SPACE` variable are both set.
 
 ## Limitations
 
 - CPU only. A 640 input is tens of milliseconds per frame on a small VM, not a realtime multi-camera service.
-- Clip jobs are in-memory, one at a time, and disappear when the process restarts or after `JOB_TTL_SECONDS` (default 30 minutes).
+- The Render free instance has 512 MB of RAM and sleeps when idle. Expect a cold start of about a minute.
+- Clip jobs are in-memory, one at a time, and disappear when the process restarts. Finished MP4s are capped by `MAX_RETAINED_JOBS` and `JOB_TTL_SECONDS`.
 - Clips are capped at 10 seconds, 300 frames and the upload size limit. Longer video is rejected with a structured error.
-- A free Hugging Face Space sleeps when idle. Waking it reloads the model.
 - YOLOv8 weights are AGPL-3.0. Serving this API on a network is a reason to keep the source public.
 
 ## License
