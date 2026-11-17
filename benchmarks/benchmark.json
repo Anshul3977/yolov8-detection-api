@@ -1,0 +1,179 @@
+{
+  "host": {
+    "model_name": "Intel(R) Xeon(R) Processor",
+    "cpu_mhz": 2400.0,
+    "logical_cpus": 4,
+    "mem_total_kib": 16387328,
+    "platform": "Linux-6.12.113+-x86_64-with-glibc2.39",
+    "machine": "x86_64"
+  },
+  "runtime": {
+    "python": "3.11.18",
+    "onnxruntime": "1.32.0",
+    "opencv": "5.0.0",
+    "numpy": "2.4.6",
+    "provider": "CPUExecutionProvider"
+  },
+  "model": {
+    "file": "models/yolov8n.onnx",
+    "sha256": "c7e13e3fe57a28b5029bc3ebe1dfacb131644c6c803d098a90894759f0458507",
+    "input_shape": [
+      "batch",
+      3,
+      "height",
+      "width"
+    ],
+    "conf": 0.25,
+    "iou": 0.45
+  },
+  "protocol": {
+    "percentile": "numpy.percentile method=linear",
+    "images": [
+      "bus.jpg",
+      "zidane.jpg"
+    ],
+    "clip": "app/static/street.mp4",
+    "note": "Stage times are perf_counter around preprocess, session.run, and postprocess. Drawing and JPEG encode are not included."
+  },
+  "runs": {
+    "threads_primary": {
+      "intra_op_threads": 4,
+      "warmup_iterations": 10,
+      "measured_iterations": 40,
+      "per_image": {
+        "bus.jpg": {
+          "preprocess_ms": {
+            "p50_ms": 1.6941770002176781,
+            "p95_ms": 1.765832300270631,
+            "n": 40
+          },
+          "inference_ms": {
+            "p50_ms": 19.259535999935906,
+            "p95_ms": 20.18092139994678,
+            "n": 40
+          },
+          "postprocess_ms": {
+            "p50_ms": 0.7563270000900957,
+            "p95_ms": 0.8597662499141734,
+            "n": 40
+          }
+        },
+        "zidane.jpg": {
+          "preprocess_ms": {
+            "p50_ms": 1.375284499999907,
+            "p95_ms": 1.483159900044484,
+            "n": 40
+          },
+          "inference_ms": {
+            "p50_ms": 19.26546499998949,
+            "p95_ms": 19.57790970013775,
+            "n": 40
+          },
+          "postprocess_ms": {
+            "p50_ms": 0.6837070000074164,
+            "p95_ms": 0.719452899988937,
+            "n": 40
+          }
+        }
+      },
+      "pooled": {
+        "preprocess_ms": {
+          "p50_ms": 1.5303585000765452,
+          "p95_ms": 1.751713249632303,
+          "n": 80
+        },
+        "inference_ms": {
+          "p50_ms": 19.264688000021124,
+          "p95_ms": 20.16192504995615,
+          "n": 80
+        },
+        "postprocess_ms": {
+          "p50_ms": 0.7349274997068278,
+          "p95_ms": 0.7941283498666961,
+          "n": 80
+        }
+      },
+      "clip": {
+        "file": "app/static/street.mp4",
+        "frames": 120,
+        "source_fps": 15.0,
+        "preprocess_ms": {
+          "p50_ms": 2.57308750019547,
+          "p95_ms": 2.9573267998330266,
+          "n": 120
+        },
+        "inference_ms": {
+          "p50_ms": 19.31238049996864,
+          "p95_ms": 25.701432550067693,
+          "n": 120
+        },
+        "postprocess_ms": {
+          "p50_ms": 0.7618974998422345,
+          "p95_ms": 0.8911116002309427,
+          "n": 120
+        },
+        "pipeline_fps": 42.22752606986317,
+        "wall_fps": 41.992900646625266,
+        "wall_s": 2.857625887999802
+      }
+    },
+    "threads_1": {
+      "intra_op_threads": 1,
+      "warmup_iterations": 5,
+      "measured_iterations": 20,
+      "per_image": {
+        "bus.jpg": {
+          "preprocess_ms": {
+            "p50_ms": 1.5018485000837245,
+            "p95_ms": 1.5848568501041882,
+            "n": 20
+          },
+          "inference_ms": {
+            "p50_ms": 50.58068650009773,
+            "p95_ms": 50.82430765023673,
+            "n": 20
+          },
+          "postprocess_ms": {
+            "p50_ms": 0.7494920000681304,
+            "p95_ms": 0.8175093498493881,
+            "n": 20
+          }
+        },
+        "zidane.jpg": {
+          "preprocess_ms": {
+            "p50_ms": 1.3942809998752637,
+            "p95_ms": 1.4992911997751435,
+            "n": 20
+          },
+          "inference_ms": {
+            "p50_ms": 50.54243750009846,
+            "p95_ms": 50.93696399987948,
+            "n": 20
+          },
+          "postprocess_ms": {
+            "p50_ms": 0.6490270002359466,
+            "p95_ms": 0.7073717499451959,
+            "n": 20
+          }
+        }
+      },
+      "pooled": {
+        "preprocess_ms": {
+          "p50_ms": 1.4713680000113527,
+          "p95_ms": 1.5752513000734325,
+          "n": 40
+        },
+        "inference_ms": {
+          "p50_ms": 50.5584135000845,
+          "p95_ms": 50.857960449889106,
+          "n": 40
+        },
+        "postprocess_ms": {
+          "p50_ms": 0.712755999984438,
+          "p95_ms": 0.7818708999593581,
+          "n": 40
+        }
+      }
+    }
+  }
+}

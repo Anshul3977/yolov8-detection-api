@@ -15,6 +15,8 @@ A production-style object detection service. Pretrained **YOLOv8n** (COCO, 80 cl
 - `POST /detect/video`: a short clip in, frames sampled at `sample_fps`, batched through the model, and linked into **tracks** so each object is counted once (`unique_objects`)
 - `WS /ws/detect`: streaming mode for webcams. Send JPEG frames, get detections with persistent track IDs back per frame (needs a long-lived server, so it runs in Docker but not on Vercel)
 - `GET /health`: model and runtime status
+- `GET /ready`: 200 only after the ONNX session has loaded
+- `POST /jobs`: queue a short clip (≤ 10 s). One job runs at a time. Poll `GET /jobs/{id}` for status, progress and per-frame detections, then `GET /jobs/{id}/video` for the annotated MP4
 - `GET /metrics`: Prometheus metrics (request rate, latency histograms, inference time, detections per class)
 - `GET /docs`: OpenAPI UI, and `GET /` is a small browser demo that draws the boxes
 
@@ -43,6 +45,25 @@ Pre- and post-processing are my own NumPy code (letterbox, box decoding, NMS), n
 ## Benchmarks
 
 All numbers were measured on CPU: an 8 vCPU Intel Xeon cloud VM, Python 3.11, torch 2.5.1+cpu, onnxruntime 1.32.0, 640×640 input, 200 timed runs after 20 warm-up runs. The VM was shared with other jobs, so treat the tail numbers (p95) as conservative. Raw JSON is in [`bench/results/`](bench/results/).
+
+### Per-stage latency
+
+<!-- BENCHMARK_STAGES:START -->
+Host `Intel(R) Xeon(R) Processor`, 4 logical CPUs at 2400.0 MHz, MemTotal 16387328 kB. ONNX Runtime 1.32.0, intra-op threads 4, input ['batch', 3, 'height', 'width']. Model sha256 `c7e13e3fe57a28b5…`. 10 warmup iterations then 40 measured iterations per image. Percentiles use NumPy's linear method. Values below are shown to 4 decimal places; exact floats are in `benchmarks/benchmark.json`. Every iteration letterboxes the photo to 640×640 before the forward pass.
+
+| Image | Pre p50 | Pre p95 | Infer p50 | Infer p95 | Post p50 | Post p95 |
+|---|---:|---:|---:|---:|---:|---:|
+| bus.jpg | 1.6942 | 1.7658 | 19.2595 | 20.1809 | 0.7563 | 0.8598 |
+| zidane.jpg | 1.3753 | 1.4832 | 19.2655 | 19.5779 | 0.6837 | 0.7195 |
+| all images | 1.5304 | 1.7517 | 19.2647 | 20.1619 | 0.7349 | 0.7941 |
+
+Sample clip `app/static/street.mp4`: 120 frames, source 15.0 fps. Pipeline FPS (frames / sum of preprocess+inference+postprocess) **42.2275**. Wall-clock FPS of that same loop **41.9929**.
+
+| Run | Infer p50 | Infer p95 | Clip pipeline FPS |
+|---|---:|---:|---:|
+| 4 threads, 640 | 19.2647 | 20.1619 | 42.2275 |
+| 1 thread, 640 | 50.5584 | 50.8580 | — |
+<!-- BENCHMARK_STAGES:END -->
 
 ### Forward pass: PyTorch vs ONNX Runtime
 
@@ -145,11 +166,10 @@ curl -F "files=@tests/assets/bus.jpg" -F "files=@tests/assets/zidane.jpg" localh
 ### Docker
 
 ```bash
-docker build -t yolov8-detection-api .
-docker run -p 7860:7860 yolov8-detection-api
+docker compose up --build
 ```
 
-The image installs only `requirements.txt` (ONNX Runtime, no PyTorch) and runs as uid 1000, so the same image works on Hugging Face Spaces.
+The image installs only `requirements.txt` (ONNX Runtime, no PyTorch) plus `ffmpeg` for annotated clips. It runs as uid 1000 and listens on `$PORT` (7860), so the same image is a Hugging Face Docker Space. `models/yolov8n.onnx` is the file produced by `scripts/export_onnx.py` from the official Ultralytics `yolov8n.pt` weights and copied into the image.
 
 ## Configuration
 
@@ -161,6 +181,8 @@ The image installs only `requirements.txt` (ONNX Runtime, no PyTorch) and runs a
 | `MAX_DETECTIONS` | `300` | Max boxes per image (`?max_det=`) |
 | `MAX_BATCH` | `16` | Max images per `/detect/batch` call |
 | `MAX_UPLOAD_MB` | `10` | Per-file upload limit (413 above it) |
+| `MAX_VIDEO_SECONDS` | `10` | Clip duration cap for `/jobs` |
+| `MAX_VIDEO_FRAMES` | `300` | Frame cap for `/jobs` |
 | `ORT_THREADS` | `0` (auto) | ONNX Runtime intra-op threads |
 | `PORT`, `WORKERS` | `7860`, `1` | Container only |
 
@@ -191,12 +213,48 @@ hf-space/       in-browser demo (ONNX Runtime Web) published to Hugging Face Spa
 
 **Vercel** (current live demo): `index.py` at the repo root exposes the FastAPI app, so `vercel deploy --prod` is all it takes. `vercel.json` gives the function 2 GB of memory and bundles `models/`.
 
-**Hugging Face Spaces** (static, free): `hf-space/` is a client-side build of the demo. `yolo-web.js` re-implements letterbox, decoding, class-aware NMS and the IoU tracker in JavaScript on top of ONNX Runtime Web. Free Docker/Gradio Spaces now need HF PRO, so the API itself lives on Vercel.
+**Hugging Face Spaces**
+
+The in-browser demo is a static Space (`hf-space/`, ONNX Runtime Web). Publish it with:
 
 ```bash
 HF_TOKEN=<write token> python scripts/deploy_hf_space.py --space <hf-user>/yolov8-detection-demo
 ```
 
+The API itself is also Docker-Space ready. Free CPU basic hardware sleeps after inactivity; the first request after sleep pays a cold start while the ONNX session loads. One-time setup:
+
+1. Create a Space named `yolov8-detection-api`, SDK **Docker**, hardware **CPU basic**, public.
+2. Create a Hugging Face token that can write to that Space.
+3. In this GitHub repo, Settings → Secrets and variables → Actions:
+   - Secret `HF_TOKEN` = that token
+   - Variable `HF_SPACE` = `<huggingface-username>/yolov8-detection-api`
+4. Re-run **Sync Hugging Face Space**, or push to `main`. The workflow uploads the repo and prepends this header to the Space README only:
+
+```yaml
+---
+title: YOLOv8 Detection API
+emoji: "🎯"
+colorFrom: blue
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+license: agpl-3.0
+---
+```
+
+If `HF_TOKEN` or `HF_SPACE` is unset, the workflow exits successfully and does nothing. The ONNX file is about 13 MB, so the Hub stores it with Git LFS (the upload uses `huggingface_hub`, which does that). The first Space build takes a few minutes. The Space URL is `https://huggingface.co/spaces/<huggingface-username>/yolov8-detection-api`.
+
+## Limitations
+
+- CPU only. A 640 input is tens of milliseconds per frame on a small VM, not a realtime multi-camera service.
+- Clip jobs are in-memory, one at a time, and disappear when the process restarts or after `JOB_TTL_SECONDS` (default 30 minutes).
+- Clips are capped at 10 seconds, 300 frames and the upload size limit. Longer video is rejected with a structured error.
+- A free Hugging Face Space sleeps when idle. Waking it reloads the model.
+- YOLOv8 weights are AGPL-3.0. Serving this API on a network is a reason to keep the source public.
+
 ## License
 
-YOLOv8 weights and the Ultralytics export tooling are AGPL-3.0, so this project is AGPL-3.0 too. The sample images in `tests/assets` come from the Ultralytics repository. The demo clip `app/static/street.mp4` is cut from "Queen Victoria Street (Fremantle Traffic Bridge) south" on Wikimedia Commons (CC0).
+YOLOv8 weights and the Ultralytics export tooling are AGPL-3.0, so this repository is AGPL-3.0 too (`LICENSE`). The sample images in `tests/assets` and `app/static/bus.jpg` come from the Ultralytics repository. The demo clip `app/static/street.mp4` is cut from "Queen Victoria Street (Fremantle Traffic Bridge) south" on Wikimedia Commons (CC0).
+
+![Annotated bus sample](docs/screenshots/ui-annotated.png)
