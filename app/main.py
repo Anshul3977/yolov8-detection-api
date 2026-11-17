@@ -10,8 +10,19 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps, UnidentifiedImageError
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -19,6 +30,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from app import metrics
 from app.config import settings
 from app.detector import Detection, Detector
+from app.errors import APIError
+from app.jobs import get_queue
 from app.schemas import BatchItem, BatchResponse, DetectResponse, HealthResponse
 from app.tracker import IoUTracker
 
@@ -32,6 +45,7 @@ async def lifespan(_: FastAPI):
     detector = Detector(settings.model_path, imgsz=settings.imgsz, threads=settings.ort_threads)
     detector.detect([np.zeros((settings.imgsz, settings.imgsz, 3), np.uint8)])  # warm-up
     metrics.MODEL_LOADED.set(1)
+    get_queue(_get_detector)
     yield
     metrics.MODEL_LOADED.set(0)
 
@@ -45,6 +59,11 @@ app = FastAPI(
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.exception_handler(APIError)
+async def api_error(_: Request, exc: APIError) -> JSONResponse:
+    return JSONResponse(exc.body(), status_code=exc.status_code)
 
 
 @app.middleware("http")
@@ -300,6 +319,43 @@ async def ws_detect(ws: WebSocket):
         pass
 
 
+def _unit(name: str, value: float | None, default: float) -> float:
+    resolved = default if value is None else value
+    if not 0.0 <= resolved <= 1.0:
+        raise APIError(422, f"invalid_{name}", f"{name} must be between 0 and 1.", {name: resolved})
+    return resolved
+
+
+@app.post("/jobs", status_code=202, summary="Queue a short clip for annotated detection")
+async def create_job(
+    file: UploadFile = File(..., description="MP4, WebM, MOV, or AVI up to 10 seconds"),
+    conf: float | None = Form(None),
+    iou: float | None = Form(None),
+):
+    """Background job. One clip runs at a time. Poll `GET /jobs/{job_id}` then fetch the MP4."""
+    data = await file.read(int(settings.max_upload_mb * 1024 * 1024) + 1)
+    queue = get_queue(_get_detector)
+    job = queue.submit(
+        data,
+        file.filename or "clip.mp4",
+        file.content_type,
+        _unit("conf", conf, settings.conf_threshold),
+        _unit("iou", iou, settings.iou_threshold),
+    )
+    return queue.get(job.id)
+
+
+@app.get("/jobs/{job_id}", summary="Job status, progress, and per-frame detections")
+def job_status(job_id: str):
+    return get_queue(_get_detector).get(job_id)
+
+
+@app.get("/jobs/{job_id}/video", summary="Annotated MP4 for a finished job")
+def job_video(job_id: str) -> FileResponse:
+    path = get_queue(_get_detector).video_path(job_id)
+    return FileResponse(path, media_type="video/mp4", filename="annotated.mp4", content_disposition_type="inline")
+
+
 @app.get("/health", response_model=HealthResponse, summary="Liveness and model status")
 def health():
     model = _get_detector()
@@ -310,6 +366,13 @@ def health():
         "classes": len(model.names),
         "imgsz": model.imgsz,
     }
+
+
+@app.get("/ready", summary="Readiness: the ONNX session is loaded")
+def ready():
+    if detector is None:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    return {"status": "ready", "model": detector.model_name, "imgsz": detector.imgsz}
 
 
 @app.get("/metrics", include_in_schema=False)

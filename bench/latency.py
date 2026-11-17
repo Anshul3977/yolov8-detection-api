@@ -12,7 +12,6 @@ import argparse
 import json
 import os
 import platform
-import statistics
 import sys
 import time
 from pathlib import Path
@@ -58,10 +57,9 @@ def main() -> None:
 
     import onnxruntime as ort
     import torch
+    from app.detector import Detector
     from PIL import Image
     from ultralytics import YOLO
-
-    from app.detector import Detector
 
     torch.set_num_threads(a.threads)
     image = np.asarray(Image.open(a.image).convert("RGB"))

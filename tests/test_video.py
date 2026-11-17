@@ -1,11 +1,10 @@
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
-
 from app.detector import Detection
 from app.tracker import IoUTracker, iou_matrix
-
-from pathlib import Path
 
 ASSETS = Path(__file__).parent / "assets"
 

@@ -53,6 +53,14 @@ def letterbox(image: np.ndarray, size: int = 640, fill: int = 114) -> tuple[np.n
     return canvas, Letterbox(scale=scale, pad_x=left, pad_y=top)
 
 
+def scale_xyxy(boxes: np.ndarray, lb: Letterbox, width: int, height: int) -> np.ndarray:
+    """Map xyxy boxes from letterboxed pixels back onto the original image."""
+    out = boxes.copy()
+    out[:, [0, 2]] = ((out[:, [0, 2]] - lb.pad_x) / lb.scale).clip(0, width)
+    out[:, [1, 3]] = ((out[:, [1, 3]] - lb.pad_y) / lb.scale).clip(0, height)
+    return out
+
+
 def nms(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> np.ndarray:
     """Greedy non-maximum suppression. boxes: (N, 4) xyxy. Returns kept indices, best first."""
     x1, y1, x2, y2 = boxes.T
@@ -123,9 +131,7 @@ class Detector:
             xyxy[:, 2:] = cxcywh[:, :2] + cxcywh[:, 2:] / 2
             # Class-aware NMS: shift each class into its own coordinate range.
             keep = nms(xyxy + class_ids[:, None] * 7680.0, scores, iou_threshold)[:max_detections]
-            xyxy = xyxy[keep]
-            xyxy[:, [0, 2]] = ((xyxy[:, [0, 2]] - lb.pad_x) / lb.scale).clip(0, w)
-            xyxy[:, [1, 3]] = ((xyxy[:, [1, 3]] - lb.pad_y) / lb.scale).clip(0, h)
+            xyxy = scale_xyxy(xyxy[keep], lb, w, h)
             results.append(
                 [
                     Detection(

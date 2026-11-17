@@ -6,8 +6,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=7860
 
+# ffmpeg encodes the annotated MP4s produced by clip jobs.
 # Hugging Face Spaces runs containers as uid 1000.
-RUN useradd --create-home --uid 1000 app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 app
 WORKDIR /home/app/service
 
 COPY requirements.txt .

@@ -25,7 +25,10 @@ class Settings:
     max_detections: int = _int("MAX_DETECTIONS", 300)
     max_batch: int = _int("MAX_BATCH", 16)
     max_upload_mb: float = _float("MAX_UPLOAD_MB", 10)
-    max_video_frames: int = _int("MAX_VIDEO_FRAMES", 120)
+    max_video_frames: int = _int("MAX_VIDEO_FRAMES", 300)
+    max_video_seconds: float = _float("MAX_VIDEO_SECONDS", 10)
+    max_queued_jobs: int = _int("MAX_QUEUED_JOBS", 4)
+    job_ttl_seconds: int = _int("JOB_TTL_SECONDS", 1800)
     # 0 lets ONNX Runtime pick (one thread per physical core).
     ort_threads: int = _int("ORT_THREADS", 0)
 
